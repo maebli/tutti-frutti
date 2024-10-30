@@ -1,0 +1,2 @@
+[workspace]
+members = ["tutti-frutti", "tutti-frutti-example"]

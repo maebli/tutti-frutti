@@ -1,0 +1,8 @@
+[package]
+name = "tutti-frutti-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tutti-frutti = { path = "../tutti-frutti" }
+tokio = { version = "1" }
