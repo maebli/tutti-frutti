@@ -12,7 +12,12 @@ Output: String List of entries: `{"listingID":"","title":"","body":"","timestamp
 Test shows how it works:
 
 ``` rust
-    println!("{:#?}",fetch_listings("tutti frutti").await);
+    use tutti_frutti::fetch_listings; // Import the function from your crate
+
+    #[tokio::main]
+    async fn main() {
+        println!("{:#?}", fetch_listings("tutti frutti").await);
+    }
 ```
 
 ## Overview
@@ -26,5 +31,5 @@ Test shows how it works:
 To run a query do the following
 
 1. Install Rust: https://www.rust-lang.org/tools/install
-
+2. run `cargo run --release -p tutti-frutti-example`
 
