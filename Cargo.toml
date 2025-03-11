@@ -1,2 +1,2 @@
 [workspace]
-members = ["tutti-frutti", "tutti-frutti-example"]
+members = ["tutti-frutti", "tutti-frutti-example","frutti-cli"]
