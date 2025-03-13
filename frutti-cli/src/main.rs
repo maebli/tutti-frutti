@@ -189,6 +189,18 @@ impl App {
         self.loading = false;
         result
     }
+
+    // Add a new function to construct and open the listing URL
+    fn open_selected_listing(&self) -> Result<()> {
+        if let Some(selected) = self.list_state.selected() {
+            if let Some(listing) = self.listings.get(selected) {
+                let url = format!("https://www.tutti.ch/de/vi/{}", listing.listingID);
+                println!("Opening: {}", url);
+                open::that(url)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 // Add this helper function for safe string truncation
@@ -413,6 +425,12 @@ async fn main() -> Result<()> {
                         }
                         KeyCode::Char('s') => {
                             app.toggle_sort();
+                        }
+                        KeyCode::Enter => {
+                            // Open the selected listing in browser when Enter is pressed
+                            if let Err(e) = app.open_selected_listing() {
+                                app.error = Some(format!("Failed to open browser: {}", e));
+                            }
                         }
                         _ => {}
                     }
