@@ -15,6 +15,35 @@ use ratatui::{
 use std::{io, time::Duration};
 use tutti_frutti::{fetch_listings, graphql::ListingNode};
 
+// Define an enum for sort categories
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortCategory {
+    Default,
+    Title,
+    Price,
+    Seller,
+}
+
+impl SortCategory {
+    fn next(&self) -> Self {
+        match self {
+            SortCategory::Default => SortCategory::Title,
+            SortCategory::Title => SortCategory::Price,
+            SortCategory::Price => SortCategory::Seller,
+            SortCategory::Seller => SortCategory::Default,
+        }
+    }
+    
+    fn as_str(&self) -> &'static str {
+        match self {
+            SortCategory::Default => "Default",
+            SortCategory::Title => "Title",
+            SortCategory::Price => "Price",
+            SortCategory::Seller => "Seller",
+        }
+    }
+}
+
 struct App {
     listings: Vec<ListingNode>,
     list_state: ListState,
@@ -22,6 +51,7 @@ struct App {
     search_mode: bool,
     loading: bool,
     error: Option<String>,
+    sort_category: SortCategory,
 }
 
 impl App {
@@ -33,6 +63,7 @@ impl App {
             search_mode: false,
             loading: false,
             error: None,
+            sort_category: SortCategory::Default,
         }
     }
 
@@ -66,6 +97,62 @@ impl App {
         self.list_state.select(Some(i));
     }
 
+    fn toggle_sort(&mut self) {
+        self.sort_category = self.sort_category.next();
+        self.sort_listings();
+    }
+
+    fn sort_listings(&mut self) {
+        // Remember the currently selected item if any
+        let selected_index = self.list_state.selected();
+        let selected_id = selected_index.and_then(|i| 
+            self.listings.get(i).map(|item| item.listingID.clone())
+        );
+        
+        match self.sort_category {
+            SortCategory::Default => {
+                // Keep original order from API
+            },
+            SortCategory::Title => {
+                self.listings.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+            },
+            SortCategory::Price => {
+                // Parse prices and sort numerically
+                self.listings.sort_by(|a, b| {
+                    let parse_price = |price: &Option<String>| -> Option<f64> {
+                        price
+                            .as_ref()
+                            .and_then(|p| p.replace(['C', 'H', 'F', ',', ' '], "").parse::<f64>().ok())
+                    };
+                    
+                    let price_a = parse_price(&a.formattedPrice);
+                    let price_b = parse_price(&b.formattedPrice);
+                    
+                    match (price_a, price_b) {
+                        (Some(a), Some(b)) => a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => std::cmp::Ordering::Equal,
+                    }
+                });
+            },
+            SortCategory::Seller => {
+                self.listings.sort_by(|a, b| {
+                    a.sellerInfo.alias.to_lowercase().cmp(&b.sellerInfo.alias.to_lowercase())
+                });
+            }
+        }
+
+        // Restore selection after sorting
+        if let Some(id) = selected_id {
+            if let Some(new_index) = self.listings.iter().position(|item| item.listingID == id) {
+                self.list_state.select(Some(new_index));
+            } else if !self.listings.is_empty() {
+                self.list_state.select(Some(0));
+            }
+        }
+    }
+
     async fn search(&mut self, query: &str) -> Result<()> {
         // Validate query before searching
         if query.trim().is_empty() {
@@ -82,6 +169,10 @@ impl App {
                 self.listings = listings;
                 if !self.listings.is_empty() {
                     self.list_state.select(Some(0));
+                    // Apply current sort if not default
+                    if self.sort_category != SortCategory::Default {
+                        self.sort_listings();
+                    }
                 } else {
                     self.list_state.select(None);
                 }
@@ -219,14 +310,50 @@ async fn main() -> Result<()> {
                     .highlight_style(Style::default().bg(Color::DarkGray))
                     .highlight_symbol("> ");
 
-                f.render_stateful_widget(listings, chunks[1], &mut app.list_state);
+                // First render the list widget
+                let list_area = chunks[1];
+                f.render_stateful_widget(listings, list_area, &mut app.list_state);
+                
+                // Then create and render a scrollbar
+                // We need to calculate where to place the scrollbar
+                if !app.listings.is_empty() {
+                    use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+                    
+                    // Get inner height excluding the block borders
+                    let inner_height = list_area.height.saturating_sub(2);
+                    
+                    // Create scrollbar state with proper type conversions
+                    let total_items = app.listings.len(); // This is already usize
+                    let position = app.list_state.selected().unwrap_or(0); // This is already usize
+                    let scrollbar_state = ScrollbarState::new(total_items)
+                        .position(position);
+                    
+                    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                        .begin_symbol(Some("↑"))
+                        .end_symbol(Some("↓"))
+                        .track_symbol(Some("│"))
+                        .thumb_symbol("█")
+                        .track_style(Style::default().fg(Color::DarkGray))
+                        .thumb_style(Style::default().fg(Color::White));
+                    
+                    // Calculate scrollbar area (position it on the right edge of the list area)
+                    let scrollbar_area = ratatui::layout::Rect {
+                        x: list_area.x + list_area.width - 2, // Put it on the right edge
+                        y: list_area.y + 1, // Skip the border
+                        width: 1,
+                        height: inner_height,
+                    };
+                    
+                    f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state.clone());
+                }
             }
 
             // Help bar
             let help_text = if app.search_mode {
-                "Enter: Submit Search | Esc: Cancel"
+                String::from("Enter: Submit Search | Esc: Cancel")
             } else {
-                "q: Quit | j/Down: Next | k/Up: Previous | /: Search"
+                format!("q: Quit | j/Down: Next | k/Up: Previous | /: Search | s: Sort ({})",
+                    app.sort_category.as_str())
             };
             
             let help_bar = Paragraph::new(help_text)
@@ -283,6 +410,9 @@ async fn main() -> Result<()> {
                         }
                         KeyCode::Char('/') => {
                             app.search_mode = true;
+                        }
+                        KeyCode::Char('s') => {
+                            app.toggle_sort();
                         }
                         _ => {}
                     }
