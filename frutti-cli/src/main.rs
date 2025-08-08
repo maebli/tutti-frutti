@@ -44,6 +44,17 @@ impl SortCategory {
     }
 }
 
+// New struct to store price statistics
+struct PriceStats {
+    count: usize,
+    min: f64,
+    max: f64,
+    mean: f64,
+    median: f64,
+    histogram: Vec<usize>,
+    bin_width: f64,
+}
+
 struct App {
     listings: Vec<ListingNode>,
     list_state: ListState,
@@ -52,6 +63,7 @@ struct App {
     loading: bool,
     error: Option<String>,
     sort_category: SortCategory,
+    stats_mode: bool,  // New field to track stats mode
 }
 
 impl App {
@@ -64,6 +76,7 @@ impl App {
             loading: false,
             error: None,
             sort_category: SortCategory::Default,
+            stats_mode: false,
         }
     }
 
@@ -201,6 +214,120 @@ impl App {
         }
         Ok(())
     }
+
+    // Add a function to toggle stats mode
+    fn toggle_stats_mode(&mut self) {
+        self.stats_mode = !self.stats_mode;
+    }
+
+    // Function to calculate price statistics
+    fn calculate_price_stats(&self) -> PriceStats {
+        // Extract prices and convert to numbers
+        let mut prices: Vec<f64> = self.listings.iter()
+            .filter_map(|listing| {
+                listing.formattedPrice
+                    .as_ref()
+                    .and_then(|p| {
+                        // More robust price parsing
+                        // First, normalize to numeric characters and decimal point
+                        let sanitized = p.chars()
+                            .map(|c| match c {
+                                '0'..='9' => c,
+                                '.' | ',' => '.', // Convert both . and , to decimal point
+                                _ => ' '          // Replace all other chars with spaces
+                            })
+                            .collect::<String>();
+                        
+                        // Remove all spaces
+                        let cleaned = sanitized.replace(' ', "");
+                        
+                        // Try to parse as f64
+                        cleaned.parse::<f64>().ok()
+                    })
+            })
+            .collect();
+        
+        // Handle empty case
+        if prices.is_empty() {
+            return PriceStats {
+                count: 0,
+                min: 0.0,
+                max: 0.0,
+                mean: 0.0,
+                median: 0.0,
+                histogram: vec![0; 10],
+                bin_width: 0.0,
+            };
+        }
+        
+        // Sort prices for median calculation
+        prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let count = prices.len();
+        let min = prices.first().cloned().unwrap_or(0.0);
+        let max = prices.last().cloned().unwrap_or(0.0);
+        let sum: f64 = prices.iter().sum();
+        let mean = if count > 0 { sum / count as f64 } else { 0.0 };
+        
+        // Calculate median
+        let median = if count > 0 {
+            if count % 2 == 0 {
+                (prices[count / 2 - 1] + prices[count / 2]) / 2.0
+            } else {
+                prices[count / 2]
+            }
+        } else {
+            0.0
+        };
+        
+        // Create histogram with 10 bins
+        let mut histogram = vec![0; 10];
+        if count > 0 && max > min {
+            // Calculate bin width
+            let bin_width = (max - min) / 10.0;
+            
+            // Create explicit bin boundaries for more accurate distribution
+            let bin_boundaries: Vec<f64> = (0..10)
+                .map(|i| min + (i as f64 * bin_width))
+                .collect();
+            
+            // Assign each price to a bin
+            for price in prices.iter() {
+                // Find the appropriate bin
+                let mut bin_idx = 9; // Default to last bin
+                for (i, boundary) in bin_boundaries.iter().enumerate() {
+                    let upper_bound = if i < 9 { bin_boundaries[i + 1] } else { max + 0.01 }; // Add small value to include max
+                    if *price >= *boundary && *price < upper_bound {
+                        bin_idx = i;
+                        break;
+                    }
+                }
+                histogram[bin_idx] += 1;
+            }
+            
+            return PriceStats {
+                count,
+                min,
+                max,
+                mean,
+                median,
+                histogram,
+                bin_width,
+            };
+        } else {
+            // If all prices are the same
+            histogram[0] = count;
+            return PriceStats {
+                count,
+                min,
+                max,
+                mean,
+                median,
+                histogram,
+                bin_width: 1.0,
+            };
+        }
+    }
 }
 
 // Add this helper function for safe string truncation
@@ -222,6 +349,61 @@ fn truncate_to_char_boundary(s: &str, max_chars: usize) -> &str {
     } else {
         s // This should not happen, but return the whole string just in case
     }
+}
+
+// Helper function to render price statistics
+fn render_price_stats(stats: &PriceStats) -> Paragraph {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Price Statistics", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::raw(format!("Count: {} items with price information", stats.count)),
+        ]),
+        Line::from(vec![
+            Span::raw(format!("Range: CHF {:.2} - CHF {:.2}", stats.min, stats.max)),
+        ]),
+        Line::from(vec![
+            Span::raw(format!("Average: CHF {:.2}", stats.mean)),
+        ]),
+        Line::from(vec![
+            Span::raw(format!("Median: CHF {:.2}", stats.median)),
+        ]),
+        Line::from(vec![
+            Span::styled("Price Distribution:", Style::default().add_modifier(Modifier::BOLD)),
+        ]),
+    ];
+    
+    // Skip histogram if no data
+    if stats.count > 0 {
+        // Find the maximum count in the histogram for scaling
+        let max_count = *stats.histogram.iter().max().unwrap_or(&1);
+        
+        // Add histogram bars
+        for (i, &count) in stats.histogram.iter().enumerate() {
+            let bin_start = stats.min + i as f64 * stats.bin_width;
+            let bin_end = bin_start + stats.bin_width;
+            
+            let bin_label = format!("CHF {:.0}-{:.0}", bin_start, bin_end);
+            let percent = count as f64 / max_count as f64;
+            
+            // Create a bar using Unicode block characters
+            let bar_width = (40.0 * percent).round() as usize;
+            let bar = "█".repeat(bar_width);
+            
+            lines.push(Line::from(vec![
+                Span::raw(format!("{:<15} ", bin_label)),
+                Span::styled(bar, Style::default().fg(Color::Blue)),
+                Span::raw(format!(" {}", count)),
+            ]));
+        }
+    } else {
+        lines.push(Line::from("No price data available"));
+    }
+    
+    Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Price Statistics"))
+        .wrap(ratatui::widgets::Wrap { trim: false })
 }
 
 #[tokio::main]
@@ -272,7 +454,7 @@ async fn main() -> Result<()> {
             
             f.render_widget(search_bar, chunks[0]);
 
-            // Results area
+            // Results area or stats view
             let results_block = Block::default()
                 .borders(Borders::ALL)
                 .title(format!("Results ({})", app.listings.len()));
@@ -290,6 +472,11 @@ async fn main() -> Result<()> {
                 let empty = Paragraph::new("No results found.")
                     .block(results_block);
                 f.render_widget(empty, chunks[1]);
+            } else if app.stats_mode {
+                // Show price stats when in stats mode
+                let stats = app.calculate_price_stats();
+                let stats_view = render_price_stats(&stats);
+                f.render_widget(stats_view, chunks[1]);
             } else {
                 let items: Vec<ListItem> = app
                     .listings
@@ -363,8 +550,10 @@ async fn main() -> Result<()> {
             // Help bar
             let help_text = if app.search_mode {
                 String::from("Enter: Submit Search | Esc: Cancel")
+            } else if app.stats_mode {
+                String::from("q: Quit | Esc/p: Back to Listings")
             } else {
-                format!("q: Quit | j/Down: Next | k/Up: Previous | /: Search | s: Sort ({})",
+                format!("q: Quit | j/Down: Next | k/Up: Previous | /: Search | s: Sort ({}) | p: Price Stats | Enter: Open",
                     app.sort_category.as_str())
             };
             
@@ -415,13 +604,26 @@ async fn main() -> Result<()> {
                             break;
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
-                            app.next();
+                            if !app.stats_mode {
+                                app.next();
+                            }
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
-                            app.previous();
+                            if !app.stats_mode {
+                                app.previous();
+                            }
+                        }
+                        KeyCode::Char('p') => {
+                            app.toggle_stats_mode();
+                        }
+                        KeyCode::Esc => {
+                            if app.stats_mode {
+                                app.stats_mode = false;
+                            }
                         }
                         KeyCode::Char('/') => {
                             app.search_mode = true;
+                            app.search_query.clear();
                         }
                         KeyCode::Char('s') => {
                             app.toggle_sort();
