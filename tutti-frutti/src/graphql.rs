@@ -60,7 +60,7 @@ pub struct Edge {
     pub node: ListingNode,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ListingNode {
     pub listingID: String,
     pub title: String,
@@ -71,17 +71,17 @@ pub struct ListingNode {
     pub thumbnail: Option<Thumbnail>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SellerInfo {
     pub alias: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Thumbnail {
     pub normalRendition: Option<Rendition>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Rendition {
     pub src: String,
 }

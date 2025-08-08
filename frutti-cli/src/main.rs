@@ -57,6 +57,7 @@ struct PriceStats {
 
 struct App {
     listings: Vec<ListingNode>,
+    original_listings: Vec<ListingNode>,  // Store original order from API
     list_state: ListState,
     search_query: String,
     search_mode: bool,
@@ -70,6 +71,7 @@ impl App {
     fn new() -> App {
         App {
             listings: Vec::new(),
+            original_listings: Vec::new(),
             list_state: ListState::default(),
             search_query: String::from("tutti frutti"),
             search_mode: false,
@@ -124,7 +126,8 @@ impl App {
         
         match self.sort_category {
             SortCategory::Default => {
-                // Keep original order from API
+                // Restore original order from API
+                self.listings = self.original_listings.clone();
             },
             SortCategory::Title => {
                 self.listings.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
@@ -135,7 +138,19 @@ impl App {
                     let parse_price = |price: &Option<String>| -> Option<f64> {
                         price
                             .as_ref()
-                            .and_then(|p| p.replace(['C', 'H', 'F', ',', ' '], "").parse::<f64>().ok())
+                            .and_then(|p| {
+                                // More robust price parsing (same as stats function)
+                                let sanitized = p.chars()
+                                    .map(|c| match c {
+                                        '0'..='9' => c,
+                                        '.' | ',' => '.', // Convert both . and , to decimal point
+                                        _ => ' '          // Replace all other chars with spaces
+                                    })
+                                    .collect::<String>();
+                                
+                                // Remove all spaces and parse
+                                sanitized.replace(' ', "").parse::<f64>().ok()
+                            })
                     };
                     
                     let price_a = parse_price(&a.formattedPrice);
@@ -179,6 +194,7 @@ impl App {
         // Use a safer error-handling approach
         let result = match fetch_listings(query).await {
             Ok(listings) => {
+                self.original_listings = listings.clone();  // Store original order
                 self.listings = listings;
                 if !self.listings.is_empty() {
                     self.list_state.select(Some(0));
@@ -194,6 +210,7 @@ impl App {
             Err(e) => {
                 self.error = Some(format!("Search error: {}", e));
                 self.listings = Vec::new();
+                self.original_listings = Vec::new();
                 self.list_state.select(None);
                 Ok(())
             }
